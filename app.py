@@ -7,7 +7,11 @@ Endpoints:
 
 Pipeline: scale (StandardScaler) -> RandomForest(+SMOTE) -> probability
 Explainability: SHAP TreeExplainer on the RF -> top contributing features.
+
+Structure-agnostic: works whether model files live in models/ or at the
+repo root (handy when files are uploaded without folder structure).
 """
+import os
 import joblib
 import numpy as np
 import pandas as pd
@@ -15,8 +19,15 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-MODEL_PATH = "models/fraud_model.joblib"
-data = joblib.load(MODEL_PATH)
+# Look for model in models/ first, fall back to repo root
+def _find(path, candidates):
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    raise FileNotFoundError(f"Could not find {path} in {candidates}")
+
+model_path = _find("model", ["models/fraud_model.joblib", "fraud_model.joblib"])
+data = joblib.load(model_path)
 preprocessor = data["preprocessor"]
 model = data["model"]
 THRESHOLD = data["threshold"]
@@ -24,8 +35,8 @@ FEATURE_COLS = data["feature_cols"]
 
 # SHAP explainer built from the RF (fast for trees)
 import shap
-explainer = shap.TreeExplainer(model.named_steps["model"] if hasattr(model, "named_steps") else model)
 model_core = model.named_steps["model"] if hasattr(model, "named_steps") else model
+explainer = shap.TreeExplainer(model_core)
 
 app = FastAPI(title="Credit Card Fraud Detection API", version="1.0.0")
 
@@ -96,4 +107,7 @@ def predict(tx: Transaction):
     }
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Serve demo page - works with static/ folder or index.html at repo root
+STATIC_DIR = "static" if os.path.isdir("static") else "."
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
